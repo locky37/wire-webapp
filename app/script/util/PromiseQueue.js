@@ -61,10 +61,11 @@ z.util.PromiseQueue = class PromiseQueue {
     const queue_entry = this._queue[0];
     if (queue_entry) {
       this._blocked = true;
+      this._clear_interval();
       this._interval = window.setInterval(() => {
         if (!this._paused) {
+          this._clear_interval();
           this._blocked = false;
-          window.clearInterval(this._interval);
           this.logger.error('Promise queue failed, unblocking queue', this._queue);
           this.execute();
         }
@@ -73,6 +74,15 @@ z.util.PromiseQueue = class PromiseQueue {
 
       queue_entry.fn()
         .catch((error) => {
+          if (error.code === z.service.BackendClientError.STATUS_CODE.UNAUTHORIZED) {
+            this._clear_interval();
+
+            this._blocked = false;
+            this._paused = true;
+
+            throw error;
+          }
+
           queue_entry.resolve_fn = undefined;
           queue_entry.reject_fn(error);
         })
@@ -80,14 +90,16 @@ z.util.PromiseQueue = class PromiseQueue {
           if (queue_entry.resolve_fn) {
             queue_entry.resolve_fn(response);
           }
-          window.clearInterval(this._interval);
+
+          this._clear_interval();
+
           this._blocked = false;
           this._queue.shift();
-          window.setTimeout(() => {
-            return this.execute();
-          },
-          0);
-        });
+
+          window.setTimeout(() => this.execute(), 0);
+        })
+        .catch((error) => this.logger.warn(`Executing queued promise failed: '${error.code || error.message}'`, error));
+
     }
   }
 
@@ -127,5 +139,11 @@ z.util.PromiseQueue = class PromiseQueue {
       this._queue.push(queue_entry);
       this.execute();
     });
+  }
+
+  _clear_interval() {
+    if (this._interval) {
+      window.clearInterval(this._interval);
+    }
   }
 };
